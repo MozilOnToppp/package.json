@@ -1,121 +1,59 @@
-// bot.js - Bot đọc channel sellall & set lệnh về web (Railway B)
-const { Client, GatewayIntentBits, Partials } = require("discord.js");
+// bot.js - Chỉ xoá tin nhắn trong channel sellall sau 120s
 
-// ===== ENV =====
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
-const SELL_CHANNEL_ID = process.env.SELL_CHANNEL_ID; // ID channel nhận .sellall ...
-const COMMAND_PANEL_URL = process.env.COMMAND_PANEL_URL; // URL web Railway A
-const COMMAND_KEY = process.env.COMMAND_KEY; // trùng với web
+const { Client, GatewayIntentBits } = require("discord.js");
 
-// TTL xoá message sau 60s
-const SELL_TTL_MS = 60 * 1000;
+const TOKEN = process.env.DISCORD_BOT_TOKEN;
+const SELL_CHANNEL_ID = process.env.SELL_CHANNEL_ID;
 
-if (!DISCORD_BOT_TOKEN) {
-  console.error("Missing DISCORD_BOT_TOKEN env");
+// TTL xoá 120 giây
+const DELETE_TTL_MS = 120 * 1000;
+
+if (!TOKEN) {
+  console.error("[BOT] Missing DISCORD_BOT_TOKEN");
   process.exit(1);
 }
 if (!SELL_CHANNEL_ID) {
-  console.error("Missing SELL_CHANNEL_ID env");
-  process.exit(1);
-}
-if (!COMMAND_PANEL_URL) {
-  console.error("Missing COMMAND_PANEL_URL env");
-  process.exit(1);
-}
-if (!COMMAND_KEY) {
-  console.error("Missing COMMAND_KEY env");
+  console.error("[BOT] Missing SELL_CHANNEL_ID");
   process.exit(1);
 }
 
-// ===== Discord client =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
-  partials: [Partials.Channel],
 });
-
-// Helper: gọi web /api/set-command
-async function sendSellCommandToPanel(username) {
-  const url = new URL("/api/set-command", COMMAND_PANEL_URL).toString();
-
-  const payload = {
-    user: username,
-    cmd: "sellall",
-    key: COMMAND_KEY,
-  };
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`Panel error ${resp.status}: ${text}`);
-  }
-}
 
 client.once("ready", () => {
-  console.log(
-    `[BOT] Logged in as ${client.user.tag}. Watching channel ${SELL_CHANNEL_ID}`
-  );
+  console.log(`[BOT] Logged in as ${client.user.tag}`);
+  console.log(`[BOT] Watching channel: ${SELL_CHANNEL_ID}`);
 });
 
-client.on("messageCreate", async (message) => {
-  try {
-    // chỉ quan tâm đúng channel
-    if (message.channel.id !== SELL_CHANNEL_ID) return;
+client.on("messageCreate", (message) => {
+  if (message.channel.id !== SELL_CHANNEL_ID) return;
 
-    const content = (message.content || "").trim();
+  console.log(
+    `[BOT] New message in sell channel: "${message.content}" from ${message.author.tag}`
+  );
 
-    if (!content) return;
-
-    // debug nhỏ để check bot đã đọc được tin
-    console.log(`[BOT] Message in sell channel: "${content}"`);
-
-    // match ".sellall username"
-    const match = content.match(/^\.sellall\s+([^\s]+)$/i);
-    if (!match) return;
-
-    const username = match[1];
-
-    console.log(`[BOT] Detected sellall for user: ${username}`);
-
-    try {
-      await sendSellCommandToPanel(username);
-      console.log(`[BOT] Sent sell command to panel for ${username}`);
-    } catch (err) {
-      console.error(
-        `[BOT] Failed to call panel for user ${username}:`,
-        err.message
-      );
-      // không xoá message để còn log nếu lỗi
-      return;
-    }
-
-    // Schedule xoá message sau 60s
-    setTimeout(() => {
-      message
-        .delete()
-        .then(() =>
-          console.log(`[BOT] Deleted sellall message for ${username}`)
+  setTimeout(() => {
+    message
+      .delete()
+      .then(() =>
+        console.log(
+          `[BOT] Deleted message "${message.content}" after 120s (id=${message.id})`
         )
-        .catch(() => {
-          // ignore lỗi (VD quyền thiếu)
-        });
-    }, SELL_TTL_MS);
-  } catch (err) {
-    console.error("[BOT] Error in messageCreate handler:", err);
-  }
+      )
+      .catch((err) => {
+        console.error("[BOT] Failed to delete message:", err.message);
+      });
+  }, DELETE_TTL_MS);
 });
 
 client
-  .login(DISCORD_BOT_TOKEN)
+  .login(TOKEN)
   .catch((err) => {
-    console.error("Failed to login Discord bot:", err);
+    console.error("[BOT] Login failed:", err);
     process.exit(1);
   });
