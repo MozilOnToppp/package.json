@@ -1,59 +1,85 @@
-// bot.js - Chỉ xoá tin nhắn trong channel sellall sau 120s
+require('dotenv').config();
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
-const { Client, GatewayIntentBits } = require("discord.js");
-
-const TOKEN = process.env.DISCORD_BOT_TOKEN;
-const SELL_CHANNEL_ID = process.env.SELL_CHANNEL_ID;
-
-// TTL xoá 120 giây
-const DELETE_TTL_MS = 120 * 1000;
+// ===== ENV =====
+const TOKEN          = process.env.DISCORD_BOT_TOKEN;
+const SELL_CHANNEL_ID = process.env.SELL_CHANNEL_ID;      // 1438901899184050328
+const SELL_TTL_SECONDS = Number(process.env.SELL_TTL_SECONDS || 120);
 
 if (!TOKEN) {
-  console.error("[BOT] Missing DISCORD_BOT_TOKEN");
+  console.error('[BOT] Thiếu DISCORD_BOT_TOKEN trong env!');
   process.exit(1);
 }
 if (!SELL_CHANNEL_ID) {
-  console.error("[BOT] Missing SELL_CHANNEL_ID");
+  console.error('[BOT] Thiếu SELL_CHANNEL_ID trong env!');
   process.exit(1);
 }
 
+console.log('[BOT] START with config:', {
+  SELL_CHANNEL_ID,
+  SELL_TTL_SECONDS
+});
+
+// ===== CLIENT =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
+  partials: [Partials.Channel, Partials.Message],
 });
 
-client.once("ready", () => {
+client.once('ready', () => {
   console.log(`[BOT] Logged in as ${client.user.tag}`);
-  console.log(`[BOT] Watching channel: ${SELL_CHANNEL_ID}`);
 });
 
-client.on("messageCreate", (message) => {
-  if (message.channel.id !== SELL_CHANNEL_ID) return;
+// Mỗi message trong channel SELL_CHANNEL_ID sẽ được set timer để xoá
+client.on('messageCreate', async (msg) => {
+  try {
+    // Chỉ care đúng channel sellall
+    if (msg.channel.id !== SELL_CHANNEL_ID) return;
 
-  console.log(
-    `[BOT] New message in sell channel: "${message.content}" from ${message.author.tag}`
-  );
+    console.log(
+      `[SEEN] ${msg.id} in #${msg.channel.name} from ${msg.author.tag}: "${msg.content}"`
+    );
 
-  setTimeout(() => {
-    message
-      .delete()
-      .then(() =>
+    // Nếu bạn chỉ muốn xoá message có .sellall thì bật đoạn dưới:
+    // if (!msg.content.toLowerCase().startsWith('.sellall')) return;
+
+    const delayMs = SELL_TTL_SECONDS * 1000;
+
+    setTimeout(async () => {
+      try {
+        // fetch lại để chắc chắn message còn tồn tại
+        const channel = await client.channels.fetch(SELL_CHANNEL_ID);
+        if (!channel || !channel.isTextBased()) {
+          console.log('[CLEANUP] Không fetch được channel, bỏ qua.');
+          return;
+        }
+
+        const toDelete = await channel.messages.fetch(msg.id).catch(() => null);
+        if (!toDelete) {
+          console.log(`[CLEANUP] Msg ${msg.id} đã bị xoá trước rồi.`);
+          return;
+        }
+
+        await toDelete.delete();
         console.log(
-          `[BOT] Deleted message "${message.content}" after 120s (id=${message.id})`
-        )
-      )
-      .catch((err) => {
-        console.error("[BOT] Failed to delete message:", err.message);
-      });
-  }, DELETE_TTL_MS);
+          `[CLEANUP] Deleted msg ${msg.id} sau ${SELL_TTL_SECONDS}s: "${msg.content}"`
+        );
+      } catch (err) {
+        console.error('[CLEANUP] Lỗi xoá msg', msg.id, err.rawError || err);
+      }
+    }, delayMs);
+  } catch (err) {
+    console.error('[messageCreate ERROR]', err);
+  }
 });
 
 client
   .login(TOKEN)
   .catch((err) => {
-    console.error("[BOT] Login failed:", err);
+    console.error('[BOT] Login failed:', err);
     process.exit(1);
   });
