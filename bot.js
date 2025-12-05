@@ -1,7 +1,33 @@
-// bot.js
-require("dotenv").config();
+// bot.js - Bot đọc channel sellall & set lệnh về web (Railway B)
 const { Client, GatewayIntentBits, Partials } = require("discord.js");
 
+// ===== ENV =====
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const SELL_CHANNEL_ID = process.env.SELL_CHANNEL_ID; // ID channel nhận .sellall ...
+const COMMAND_PANEL_URL = process.env.COMMAND_PANEL_URL; // URL web Railway A
+const COMMAND_KEY = process.env.COMMAND_KEY; // trùng với web
+
+// TTL xoá message sau 60s
+const SELL_TTL_MS = 60 * 1000;
+
+if (!DISCORD_BOT_TOKEN) {
+  console.error("Missing DISCORD_BOT_TOKEN env");
+  process.exit(1);
+}
+if (!SELL_CHANNEL_ID) {
+  console.error("Missing SELL_CHANNEL_ID env");
+  process.exit(1);
+}
+if (!COMMAND_PANEL_URL) {
+  console.error("Missing COMMAND_PANEL_URL env");
+  process.exit(1);
+}
+if (!COMMAND_KEY) {
+  console.error("Missing COMMAND_KEY env");
+  process.exit(1);
+}
+
+// ===== Discord client =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -11,75 +37,85 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-const SELL_CHANNEL_ID = process.env.SELL_CHANNEL_ID;
-const COMMAND_PANEL_URL = process.env.COMMAND_PANEL_URL; // URL Railway web panel của ông
-const COMMAND_KEY = process.env.COMMAND_KEY;
-
-// Gửi lệnh về panel (nếu ông còn dùng /api/set-command)
+// Helper: gọi web /api/set-command
 async function sendSellCommandToPanel(username) {
-  if (!COMMAND_PANEL_URL || !COMMAND_KEY) return;
+  const url = new URL("/api/set-command", COMMAND_PANEL_URL).toString();
 
-  try {
-    await fetch(`${COMMAND_PANEL_URL}/api/set-command`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user: username,
-        cmd: "sellall",
-        key: COMMAND_KEY,
-      }),
-    });
-    console.log("[BOT] Đã gửi sellall tới panel cho:", username);
-  } catch (err) {
-    console.error("[BOT] Lỗi gọi panel:", err);
+  const payload = {
+    user: username,
+    cmd: "sellall",
+    key: COMMAND_KEY,
+  };
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Panel error ${resp.status}: ${text}`);
   }
 }
 
+client.once("ready", () => {
+  console.log(
+    `[BOT] Logged in as ${client.user.tag}. Watching channel ${SELL_CHANNEL_ID}`
+  );
+});
+
 client.on("messageCreate", async (message) => {
-  // chỉ xem đúng channel sellall
-  if (message.channelId !== SELL_CHANNEL_ID) return;
+  try {
+    // chỉ quan tâm đúng channel
+    if (message.channel.id !== SELL_CHANNEL_ID) return;
 
-  // chỉ xử lý tin từ webhook (web của ông gửi)
-  if (!message.webhookId) return;
+    const content = (message.content || "").trim();
 
-  const content = (message.content || "").trim();
-  const lower = content.toLowerCase();
-  console.log("[BOT] Webhook msg:", content);
+    if (!content) return;
 
-  if (!lower.startsWith(".sellall")) return;
+    // debug nhỏ để check bot đã đọc được tin
+    console.log(`[BOT] Message in sell channel: "${content}"`);
 
-  const parts = content.split(/\s+/);
-  const username = parts[1];
-  if (!username) return;
+    // match ".sellall username"
+    const match = content.match(/^\.sellall\s+([^\s]+)$/i);
+    if (!match) return;
 
-  // 1) Gửi lệnh sang panel (tuỳ usecase, không cần thì có thể bỏ)
-  await sendSellCommandToPanel(username);
+    const username = match[1];
 
-  // 2) Hẹn xoá message sau 60s
-  setTimeout(() => {
-    if (!message.deleted) {
+    console.log(`[BOT] Detected sellall for user: ${username}`);
+
+    try {
+      await sendSellCommandToPanel(username);
+      console.log(`[BOT] Sent sell command to panel for ${username}`);
+    } catch (err) {
+      console.error(
+        `[BOT] Failed to call panel for user ${username}:`,
+        err.message
+      );
+      // không xoá message để còn log nếu lỗi
+      return;
+    }
+
+    // Schedule xoá message sau 60s
+    setTimeout(() => {
       message
         .delete()
-        .then(() => {
-          console.log("[BOT] Đã xoá message sellall sau 60s:", content);
-        })
-        .catch(() => {});
-    }
-  }, 60_000);
+        .then(() =>
+          console.log(`[BOT] Deleted sellall message for ${username}`)
+        )
+        .catch(() => {
+          // ignore lỗi (VD quyền thiếu)
+        });
+    }, SELL_TTL_MS);
+  } catch (err) {
+    console.error("[BOT] Error in messageCreate handler:", err);
+  }
 });
 
-client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
-});
-
-// LẤY TOKEN TỪ ENV ĐƠN GIẢN
-const token = process.env.DISCORD_BOT_TOKEN;
-
-if (!token || typeof token !== "string") {
-  console.error("[BOT] DISCORD_BOT_TOKEN không tồn tại hoặc không hợp lệ.");
-  process.exit(1);
-}
-
-console.log("[BOT] Starting login with token length:", token.length);
-
-client.login(token);
+client
+  .login(DISCORD_BOT_TOKEN)
+  .catch((err) => {
+    console.error("Failed to login Discord bot:", err);
+    process.exit(1);
+  });
