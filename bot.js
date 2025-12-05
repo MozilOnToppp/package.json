@@ -72,12 +72,14 @@ client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-let token = process.env.DISCORD_BOT_TOKEN;
+// LẤY TOKEN TỪ ENV ĐƠN GIẢN
+const token = process.env.DISCORD_BOT_TOKEN;
 
-// Nếu muốn bảo vệ nhẹ kiểu base64:
-if (process.env.DISCORD_BOT_TOKEN_B64 && !token) {
-  const buff = Buffer.from(process.env.DISCORD_BOT_TOKEN_B64, "base64");
-  token = buff.toString("utf8");
+if (!token || typeof token !== "string") {
+  console.error("[BOT] DISCORD_BOT_TOKEN không tồn tại hoặc không hợp lệ.");
+  process.exit(1);
 }
+
+console.log("[BOT] Starting login with token length:", token.length);
 
 client.login(token);
